@@ -9,16 +9,15 @@ import sys
 
 
 ###
-# Metric: Response time of comments
+# Data for metric: response time of comments
 #
 # Compute the time that passes between
 # the creation of a comment and its
 # first reply
 #
 ###
-def metric_response_time_comments(idea):
+def data_metric_response_time_comments(idea):
     ignored_comments, problematic_comments = 0, 0
-    num_comments, num_replies = 0, 0
     vec_comments, attended_comments = {}, []
 
     for comment in idea['comments_array']:
@@ -28,14 +27,12 @@ def metric_response_time_comments(idea):
             except KeyError:
                 vec_comments[comment['id']] = {'creation_dt': parser.parse(comment['creation_datetime']),
                                                'replies': []}
-            num_comments += 1
         else:
             # found a reply, save
             try:
                 vec_comments[comment['parent_id']]['replies'].append(comment)
             except KeyError:
                 vec_comments[comment['parent_id']] = {'creation_dt': '', 'replies': [comment]}
-            num_replies += 1
 
     for comment_id, comment in vec_comments.iteritems():
         if len(comment['replies']) > 0:
@@ -47,21 +44,18 @@ def metric_response_time_comments(idea):
             else:
                 response_time_hours = response_time.total_seconds() / 3600
             first_reaction_dt = first_reaction.strftime('%Y-%m-%d %H:%M:%S%z')
+            attended_comments.append({'comment_id': comment_id,
+                                      'comment_dt': comment['creation_dt'].strftime('%Y-%m-%d %H:%M:%S%z'),
+                                      'first_reaction_dt': first_reaction_dt,
+                                      'response_time_hours': response_time_hours})
         else:
             ignored_comments += 1
-            response_time_hours = -999
-            first_reaction_dt = ''
-        attended_comments.append({'comment_id': comment_id,
-                                  'comment_dt': comment['creation_dt'].strftime('%Y-%m-%d %H:%M:%S%z'),
-                                  'first_reaction_dt': first_reaction_dt,
-                                  'response_time_hours': response_time_hours})
 
-    return num_comments, num_replies, ignored_comments, \
-           problematic_comments, attended_comments
+    return ignored_comments, problematic_comments, attended_comments
 
 
 ####
-# Metric: Response time of ideas
+# Data for metric: response time of ideas
 #
 # Compute the time that passes between
 # the creation of an idea and its first response
@@ -83,62 +77,68 @@ def sort_elements_chronologically(elements):
     return sorted(elements_dt)
 
 
-def metric_response_time_idea(idea):
-    ignored_idea, problematic_idea = 0, 0
+def data_metric_response_time_idea(idea):
+    # uncompleted_idea means don't have in the data set info about all
+    # the idea's votes and comments
+    problematic_idea, uncompleted_idea = 0, 0
     first_reaction_comment, first_reaction_vote = 0, 0
-    first_reaction_dt = ''
+    first_reaction_dt, response_time_hours = '', 0
 
     idea_creation_time = parser.parse(idea['creation_datetime'])
-    num_comments = len(idea['comments_array'])
-    num_votes = len(idea['votes_array'])
+    num_comments = int(idea['comments'])
+    num_votes = int(idea['up_votes']) + int(idea['down_votes'])
     comments_sorted, votes_sorted = None, None
 
     if num_comments == 0 and num_votes == 0:
-        ignored_idea = 1
         response_time_hours = -999
     else:
-        if num_comments > 0:
-            comments_sorted = sort_elements_chronologically(idea['comments_array'])
-        if num_votes > 0:
-            votes_sorted = sort_elements_chronologically(idea['votes_array'])
-        if comments_sorted:
-            if votes_sorted:
-                if comments_sorted[0] > votes_sorted[0]:  # '>' means which is newer
-                    first_reaction = votes_sorted[0]
-                    type_first_reaction = 'vote'
+        if len(idea['comments_array']) == num_comments and \
+           len(idea['votes_array']) == num_votes:
+            if num_comments > 0:
+                comments_sorted = sort_elements_chronologically(idea['comments_array'])
+            if num_votes > 0:
+                votes_sorted = sort_elements_chronologically(idea['votes_array'])
+            if comments_sorted:
+                if votes_sorted:
+                    if comments_sorted[0] > votes_sorted[0]:  # '>' means which is newer
+                        first_reaction = votes_sorted[0]
+                        type_first_reaction = 'vote'
+                    else:
+                        first_reaction = comments_sorted[0]
+                        type_first_reaction = 'comment'
                 else:
                     first_reaction = comments_sorted[0]
                     type_first_reaction = 'comment'
             else:
-                first_reaction = comments_sorted[0]
-                type_first_reaction = 'comment'
-        else:
-            first_reaction = votes_sorted[0]
-            type_first_reaction = 'vote'
-        response_time = first_reaction - idea_creation_time
-        if response_time.total_seconds() < 0:
-            problematic_idea = 1
-            response_time_hours = -999
-        else:
-            response_time_hours = response_time.total_seconds() / 3600
-            if type_first_reaction == 'comment':
-                first_reaction_comment = 1
+                first_reaction = votes_sorted[0]
+                type_first_reaction = 'vote'
+            response_time = first_reaction - idea_creation_time
+            if response_time.total_seconds() < 0:
+                problematic_idea = 1
+                response_time_hours = -999
             else:
-                first_reaction_vote = 1
-        first_reaction_dt = first_reaction.strftime('%Y-%m-%d %H:%M:%S%z')
+                response_time_hours = response_time.total_seconds() / 3600
+                if type_first_reaction == 'comment':
+                    first_reaction_comment = 1
+                else:
+                    first_reaction_vote = 1
+            first_reaction_dt = first_reaction.strftime('%Y-%m-%d %H:%M:%S%z')
+        else:
+            uncompleted_idea = 1
+            response_time_hours = -999
 
-    return response_time_hours, ignored_idea, problematic_idea, first_reaction_comment, \
-           first_reaction_vote, first_reaction_dt
+    return response_time_hours, problematic_idea, first_reaction_comment, \
+           first_reaction_vote, first_reaction_dt, uncompleted_idea
 
 
 ####
-# Metric: Comments voted and replied
+# Data for metric: comments voted and replied
 #
 # Compute the number of votes (positive and negatives)
 # and replies that the comments received
 #
 ####
-def metric_number_votes_replies_comments(idea):
+def data_metric_number_votes_replies_comments(idea):
     comments_voted, comments_p_voted, comments_n_voted = 0, 0, 0
     replies, replies_voted, replies_p_voted, replies_n_voted = 0, 0, 0, 0
     replies_replied, comments = 0, 0
@@ -168,42 +168,56 @@ def metric_number_votes_replies_comments(idea):
 
 
 ####
-# Metric: Ideas voted and commented
+# Data for metric: ideas voted and commented
 #
 # Compute the number of votes (positive and negatives)
 # and comments that ideas received
 #
 ####
-def metric_number_votes_comments_idea(idea):
+def data_metric_number_votes_comments_idea(idea):
     idea_commented, idea_voted, idea_p_voted, idea_n_voted = 0, 0, 0, 0
+    ignored_idea, attended_idea, idea_only_voted, idea_only_commented = 0, 0, 0, 0
+    idea_voted_commented = 0
 
     if idea['up_votes'] != '0' or idea['down_votes'] != '0':
         idea_voted = 1
         if idea['up_votes'] != '0':
             idea_p_voted = 1
-        else:
+        if idea['down_votes'] != '0':
             idea_n_voted = 1
     if idea['comments'] != '0':
-        idea_commented += 1
+        idea_commented = 1
+    if idea_voted == 0 and idea_commented == 0:
+        ignored_idea = 1
+    else:
+        attended_idea = 1
+        if idea_voted == 0 and idea_commented == 1:
+            idea_only_commented = 1
+        elif idea_voted == 1 and idea_commented == 0:
+            idea_only_voted = 1
+        else:
+            idea_voted_commented = 1
 
-    return idea_voted, idea_p_voted, idea_n_voted, idea_commented
+    return idea_voted, idea_p_voted, idea_n_voted, idea_commented, ignored_idea, attended_idea, \
+           idea_only_voted, idea_only_commented, idea_voted_commented
 
 
 ###
-# Metric: Ideas off-topic
+# Data for metric: irrelevant ideas
 #
-# Check whether idea was classified as off-topic
+# Check whether idea was classified as irrelevant
+# (off-topic or recycle bin)
 #
 ####
-def metric_offtopic_idea(idea):
-    if idea['status'] == 'offtopic':
+def data_metric_irrelevant_idea(idea):
+    if idea['status'] == 'offtopic' or idea['status'] == 'recyclebin':
         return 1
     else:
         return 0
 
 
 ###
-# Metric: Feedback on Newcomer Ideas
+# Data metric: feedback on Newcomer Ideas
 #
 # Compute the number of times ideas
 # posted by newcomers were answered
@@ -234,82 +248,38 @@ def created_by_newcomer(idea, authors):
         return {'isnewcomer': False, 'explanation': 'Unknown_registration_date'}
 
 
-def metric_feedback_newcomer_idea(idea, authors):
+def data_metric_feedback_newcomer_idea(idea, authors):
     idea_by_newcomer, received_feedback = 0, 0
     type_first_feedback, first_feedback_dt = '', ''
-    comments_sorted, votes_sorted = None, None
     response_time_hours = -999
 
     idea_creator = created_by_newcomer(idea, authors)
     if idea_creator['isnewcomer']:
         idea_by_newcomer = 1
-        num_comments = len(idea['comments_array'])
-        num_votes = len(idea['votes_array'])
-        idea_creation_time = parser.parse(idea['creation_datetime'])
-        if num_comments == 0 and num_votes == 0:
-            return idea_by_newcomer, received_feedback, type_first_feedback, \
-                   first_feedback_dt, response_time_hours
-        else:
+        response_time_hours, problematic_idea, first_react_comment, first_react_vote, \
+        first_feedback_dt, uncompleted_idea = data_metric_response_time_idea(idea)
+        if response_time_hours != -999:
             received_feedback = 1
-            if num_comments > 0:
-                comments_sorted = sort_elements_chronologically(idea['comments_array'])
-            if num_votes > 0:
-                votes_sorted = sort_elements_chronologically(idea['votes_array'])
-            if comments_sorted:
-                if votes_sorted:
-                    if comments_sorted[0] > votes_sorted[0]:  # '>' means which is newer
-                        first_feedback = votes_sorted[0]
-                        type_first_feedback = 'vote'
-                    else:
-                        first_feedback = comments_sorted[0]
-                        type_first_feedback = 'comment'
-                else:
-                    first_feedback = comments_sorted[0]
-                    type_first_feedback = 'comment'
-            else:
-                first_feedback = votes_sorted[0]
-                type_first_feedback = 'vote'
-            response_time = first_feedback - idea_creation_time
-            if response_time.total_seconds() > 0:
-                response_time_hours = response_time.total_seconds() / 3600
-            first_feedback_dt = first_feedback.strftime('%Y-%m-%d %H:%M:%S%z')
-            return idea_by_newcomer, received_feedback, type_first_feedback, \
-                   first_feedback_dt, response_time_hours
+        if first_react_comment == 1:
+            type_first_feedback = 'comment'
+        elif first_react_vote == 1:
+            type_first_feedback = 'vote'
+        return idea_by_newcomer, received_feedback, type_first_feedback, \
+               first_feedback_dt, response_time_hours
     else:
         return idea_by_newcomer, received_feedback, type_first_feedback, \
                first_feedback_dt, response_time_hours
 
 
-# Structure metrics parameter
-# {metric1_id:
-#   {community1_id:
-#       {var1:value_var1,
-#       ...},
-#   community2_id:
-#       {var1:value_var1, ...}
-#   },
-#   metric2_id: {...},
-#   metric3_id: {...},
-#   ...
-# }
-# Example:
-# metrics = {'votes_comments_ideas':
-#               {'8825':
-#                   {'voted_ideas':0,
-#                    'up_voted_ideas: 0,
-#                    'down_voted_ideas: 0,
-#                    'commented_ideas: 0
-#                   },
-#                 '2203':
-#                   {'voted_ideas': 0,...},
-#                 ...},
-#            'votes_replies_comments':
-#               {'8825':{...},'2203':{...}},
-#             ...
-#            }
-def compute_metrics(communities, authors, data, metrics):
+##
+# Gather data to later use to
+# compute metrics
+#
+##
+def gather_data(communities, authors, data):
     tot_communities = len(data)
     community_counter = 0
+    metric_data = {}
 
     for community_id, ideas in data.iteritems():
         community_counter += 1
@@ -318,113 +288,99 @@ def compute_metrics(communities, authors, data, metrics):
         total_ideas = len(ideas)
         for idx in range(0, total_ideas):
             idea = ideas[idx]
-            if 'votes_comments_ideas' in metrics.keys():  # it means that the metric has to be computed
-                if idx == 0:
-                    # initialize metric vars
-                    metrics['votes_comments_ideas'][community_id] = {}
-                    metrics['votes_comments_ideas'][community_id]['ideas'] = total_ideas
-                    metrics['votes_comments_ideas'][community_id]['voted_ideas'] = 0
-                    metrics['votes_comments_ideas'][community_id]['up_voted_ideas'] = 0
-                    metrics['votes_comments_ideas'][community_id]['down_voted_ideas'] = 0
-                    metrics['votes_comments_ideas'][community_id]['commented_ideas'] = 0
-                idea_voted, idea_p_voted, idea_n_voted, idea_commented = metric_number_votes_comments_idea(idea)
-                metrics['votes_comments_ideas'][community_id]['voted_ideas'] += idea_voted
-                metrics['votes_comments_ideas'][community_id]['up_voted_ideas'] += idea_p_voted
-                metrics['votes_comments_ideas'][community_id]['down_voted_ideas'] += idea_n_voted
-                metrics['votes_comments_ideas'][community_id]['commented_ideas'] += idea_commented
-            if 'votes_replies_comments' in metrics.keys():
-                if idx == 0:
-                    # initialize metric vars
-                    metrics['votes_replies_comments'][community_id] = {}
-                    metrics['votes_replies_comments'][community_id]['replies'] = 0
-                    metrics['votes_replies_comments'][community_id]['voted_comments'] = 0
-                    metrics['votes_replies_comments'][community_id]['up_voted_comments'] = 0
-                    metrics['votes_replies_comments'][community_id]['down_voted_comments'] = 0
-                    metrics['votes_replies_comments'][community_id]['voted_replies'] = 0
-                    metrics['votes_replies_comments'][community_id]['up_voted_replies'] = 0
-                    metrics['votes_replies_comments'][community_id]['down_voted_replies'] = 0
-                    metrics['votes_replies_comments'][community_id]['replied_replies'] = 0
-                    metrics['votes_replies_comments'][community_id]['comments'] = 0
-                comments, comments_voted, comments_p_voted, comments_n_voted, replies, \
-                replies_voted, replies_p_voted, replies_n_voted, replies_replied = \
-                metric_number_votes_replies_comments(idea)
-                metrics['votes_replies_comments'][community_id]['comments'] += comments
-                metrics['votes_replies_comments'][community_id]['replies'] += replies
-                metrics['votes_replies_comments'][community_id]['voted_comments'] += comments_voted
-                metrics['votes_replies_comments'][community_id]['up_voted_comments'] += comments_p_voted
-                metrics['votes_replies_comments'][community_id]['down_voted_comments'] += comments_n_voted
-                metrics['votes_replies_comments'][community_id]['voted_replies'] += replies_voted
-                metrics['votes_replies_comments'][community_id]['up_voted_replies'] += replies_p_voted
-                metrics['votes_replies_comments'][community_id]['down_voted_replies'] += replies_n_voted
-                metrics['votes_replies_comments'][community_id]['replied_replies'] += replies_replied
-            if 'response_time_ideas' in metrics.keys():
-                if idx == 0:
-                    metrics['response_time_ideas'][community_id] = {}
-                    metrics['response_time_ideas'][community_id]['ideas'] = total_ideas
-                    metrics['response_time_ideas'][community_id]['ignored_ideas'] = 0
-                    metrics['response_time_ideas'][community_id]['problematic_ideas'] = 0
-                    metrics['response_time_ideas'][community_id]['ideas_with_comment_as_first_reaction'] = 0
-                    metrics['response_time_ideas'][community_id]['ideas_with_vote_as_first_reaction'] = 0
-                    metrics['response_time_ideas'][community_id]['response_times'] = []
-                response_time_hour, ignored_idea, problematic_idea, first_react_comment, first_react_vote, \
-                first_react_dt = metric_response_time_idea(idea)
-                metrics['response_time_ideas'][community_id]['ignored_ideas'] += ignored_idea
-                metrics['response_time_ideas'][community_id]['problematic_ideas'] += problematic_idea
-                metrics['response_time_ideas'][community_id]['ideas_with_comment_as_first_reaction'] += \
-                    first_react_comment
-                metrics['response_time_ideas'][community_id]['ideas_with_vote_as_first_reaction'] += \
-                    first_react_vote
+            if idx == 0:
+                # initialize community metric vars
+                metric_data[community_id] = {}
+                metric_data[community_id]['01_ideas'] = total_ideas
+                metric_data[community_id]['02_problematic_ideas'] = 0
+                metric_data[community_id]['03_attended_ideas'] = 0
+                metric_data[community_id]['04_attended_uncompleted_ideas'] = 0
+                metric_data[community_id]['05_ignored_ideas'] = 0
+                metric_data[community_id]['06_voted_ideas'] = 0
+                metric_data[community_id]['07_up_voted_ideas'] = 0
+                metric_data[community_id]['08_down_voted_ideas'] = 0
+                metric_data[community_id]['09_commented_ideas'] = 0
+                metric_data[community_id]['10_attended_only_vote_ideas'] = 0
+                metric_data[community_id]['11_attended_only_comment_ideas'] = 0
+                metric_data[community_id]['12_attended_vote_comment_ideas'] = 0
+                metric_data[community_id]['13_ideas_with_comment_as_first_reaction'] = 0
+                metric_data[community_id]['14_ideas_with_vote_as_first_reaction'] = 0
+                metric_data[community_id]['15_response_times_ideas'] = []
+                metric_data[community_id]['16_comments'] = 0
+                metric_data[community_id]['17_ignored_comments'] = 0
+                metric_data[community_id]['18_problematic_comments'] = 0
+                metric_data[community_id]['19_voted_comments'] = 0
+                metric_data[community_id]['20_up_voted_comments'] = 0
+                metric_data[community_id]['21_down_voted_comments'] = 0
+                metric_data[community_id]['22_replies'] = 0
+                metric_data[community_id]['23_voted_replies'] = 0
+                metric_data[community_id]['24_up_voted_replies'] = 0
+                metric_data[community_id]['25_down_voted_replies'] = 0
+                metric_data[community_id]['26_replied_replies'] = 0
+                metric_data[community_id]['27_response_times_comments'] = []
+                metric_data[community_id]['28_irrelevant_ideas'] = 0
+                metric_data[community_id]['29_newcomer_ideas'] = 0
+                metric_data[community_id]['30_attended_newcomer_ideas'] = 0
+                metric_data[community_id]['31_array_attended_newcomer_ideas'] = []    
+            idea_voted, idea_p_voted, idea_n_voted, idea_commented, ignored_idea, attended_idea, \
+            idea_only_voted, idea_only_commented, idea_voted_commented = \
+            data_metric_number_votes_comments_idea(idea)
+            metric_data[community_id]['06_voted_ideas'] += idea_voted
+            metric_data[community_id]['07_up_voted_ideas'] += idea_p_voted
+            metric_data[community_id]['08_down_voted_ideas'] += idea_n_voted
+            metric_data[community_id]['09_commented_ideas'] += idea_commented
+            metric_data[community_id]['05_ignored_ideas'] += ignored_idea
+            metric_data[community_id]['03_attended_ideas'] += attended_idea
+            metric_data[community_id]['10_attended_only_vote_ideas'] += idea_only_voted
+            metric_data[community_id]['11_attended_only_comment_ideas'] += idea_only_commented
+            metric_data[community_id]['12_attended_vote_comment_ideas'] += idea_voted_commented
+            comments, comments_voted, comments_p_voted, comments_n_voted, replies, \
+            replies_voted, replies_p_voted, replies_n_voted, replies_replied = \
+            data_metric_number_votes_replies_comments(idea)
+            metric_data[community_id]['16_comments'] += comments
+            metric_data[community_id]['22_replies'] += replies
+            metric_data[community_id]['19_voted_comments'] += comments_voted
+            metric_data[community_id]['20_up_voted_comments'] += comments_p_voted
+            metric_data[community_id]['21_down_voted_comments'] += comments_n_voted
+            metric_data[community_id]['23_voted_replies'] += replies_voted
+            metric_data[community_id]['24_up_voted_replies'] += replies_p_voted
+            metric_data[community_id]['25_down_voted_replies'] += replies_n_voted
+            metric_data[community_id]['26_replied_replies'] += replies_replied
+            response_time_hour, problematic_idea, first_react_comment, first_react_vote, \
+            first_react_dt, uncompleted_idea = data_metric_response_time_idea(idea)
+            metric_data[community_id]['02_problematic_ideas'] += problematic_idea
+            metric_data[community_id]['04_attended_uncompleted_ideas'] += uncompleted_idea
+            metric_data[community_id]['13_ideas_with_comment_as_first_reaction'] += \
+                first_react_comment
+            metric_data[community_id]['14_ideas_with_vote_as_first_reaction'] += \
+                first_react_vote
+            if response_time_hour != -999:  # only save response time of completed ideas
                 if first_react_vote == 1:
                     type_first_reaction = 'vote'
                 else:
                     type_first_reaction = 'comment'
-                metrics['response_time_ideas'][community_id]['response_times'].\
+                metric_data[community_id]['15_response_times_ideas'].\
                     append({'idea_id': idea['id'], 'response_time_hour:': response_time_hour,
                             'idea_dt': idea['creation_datetime'], 'first_reaction_dt': first_react_dt,
-                            'type_first_reaction': type_first_reaction})
-            if 'response_time_comments' in metrics.keys():
-                if idx == 0:
-                    metrics['response_time_comments'][community_id] = {}
-                    metrics['response_time_comments'][community_id]['comments'] = 0
-                    metrics['response_time_comments'][community_id]['replies'] = 0
-                    metrics['response_time_comments'][community_id]['ignored_comments'] = 0
-                    metrics['response_time_comments'][community_id]['problematic_comments'] = 0
-                    metrics['response_time_comments'][community_id]['response_times'] = []
-                comments, replies, ignored_comments, problematic_comments, attended_comments = \
-                    metric_response_time_comments(idea)
-                metrics['response_time_comments'][community_id]['comments'] += comments
-                metrics['response_time_comments'][community_id]['replies'] += replies
-                metrics['response_time_comments'][community_id]['ignored_comments'] += ignored_comments
-                metrics['response_time_comments'][community_id]['problematic_comments'] += problematic_comments
-                metrics['response_time_comments'][community_id]['response_times'] += attended_comments
-            if 'offtopic_content' in metrics.keys():
-                if idx == 0:
-                    # initialize metric vars
-                    metrics['offtopic_content'][community_id] = {}
-                    metrics['offtopic_content'][community_id]['ideas'] = total_ideas
-                    metrics['offtopic_content'][community_id]['offtopic_ideas'] = 0
-                metrics['offtopic_content'][community_id]['offtopic_ideas'] += metric_offtopic_idea(idea)
-            if 'treatment_newcomers' in metrics.keys():
-                if idx == 0:
-                    metrics['treatment_newcomers'][community_id] = {}
-                    metrics['treatment_newcomers'][community_id]['ideas'] = total_ideas
-                    metrics['treatment_newcomers'][community_id]['newcomer_ideas'] = 0
-                    metrics['treatment_newcomers'][community_id]['attended_newcomer_ideas'] = 0
-                    metrics['treatment_newcomers'][community_id]['attended_ideas'] = []
-                idea_by_newcomer, received_feedback, type_first_feedback, \
-                first_feedback_dt, response_time_hours = metric_feedback_newcomer_idea(idea, authors)
-                metrics['treatment_newcomers'][community_id]['newcomer_ideas'] += idea_by_newcomer
-                metrics['treatment_newcomers'][community_id]['attended_newcomer_ideas'] += received_feedback
-                if idea_by_newcomer == 1 and received_feedback == 1 and response_time_hours != -999:
-                    attended_idea = {'idea_id': idea['id'], 'type_first_feedback': type_first_feedback,
-                                     'first_feedback_dt': first_feedback_dt,
-                                     'response_time_first_feedback_hours': response_time_hours,
-                                     'idea_creation_dt': idea['creation_datetime']}
-                    metrics['treatment_newcomers'][community_id]['attended_ideas'].append(attended_idea)
-        if 'tags_content' in metrics.keys():
-            metrics['tags_content'][community_id] = communities.get(community_id)['tags']
+                            'type_first_reaction': type_first_reaction})                                
+            ignored_comments, problematic_comments, attended_comments = data_metric_response_time_comments(idea)
+            metric_data[community_id]['17_ignored_comments'] += ignored_comments
+            metric_data[community_id]['18_problematic_comments'] += problematic_comments
+            metric_data[community_id]['27_response_times_comments'] += attended_comments
+            metric_data[community_id]['28_irrelevant_ideas'] += data_metric_irrelevant_idea(idea)
+            idea_by_newcomer, received_feedback, type_first_feedback, \
+            first_feedback_dt, response_time_hours = data_metric_feedback_newcomer_idea(idea, authors)
+            metric_data[community_id]['29_newcomer_ideas'] += idea_by_newcomer
+            metric_data[community_id]['30_attended_newcomer_ideas'] += received_feedback
+            if idea_by_newcomer == 1 and received_feedback == 1:
+                attended_idea = {'idea_id': idea['id'], 'type_first_feedback': type_first_feedback,
+                                 'first_feedback_dt': first_feedback_dt,
+                                 'response_time_first_feedback_hours': response_time_hours,
+                                 'idea_creation_dt': idea['creation_datetime']}
+                metric_data[community_id]['31_array_attended_newcomer_ideas'].append(attended_idea)
+        metric_data[community_id]['32_tags_content'] = communities.get(community_id)['tags']
 
-    return metrics
+    return metric_data
 
 ###
 # Load in a dictionary all the ideas, comments, and votes
@@ -458,6 +414,7 @@ def build_dataset(fname_ideas, fname_comments, fname_orphan_comments, fname_vote
             orphan_comments = list(open(fname_orphan_comments))
             orphan_comments = [line.rstrip() for line in orphan_comments]  # Take out newline character
             header_comments = list_comments[0]
+            hold_replies = []
             with open(fname_votes, 'rb') as csv_votes:
                 reader_votes = csv.reader(csv_votes, delimiter=',')
                 list_votes = list(reader_votes)
@@ -467,6 +424,8 @@ def build_dataset(fname_ideas, fname_comments, fname_orphan_comments, fname_vote
                 print('Be patient, we are processing {} ideas, {} comments, and {} votes'.
                       format(total_ideas, total_comments, total_votes))
                 for idx_ideas in range(1, total_ideas):
+                    print_progress_bar(idx_ideas, total_ideas, prefix='Progress',
+                                       suffix='Completed', bar_length=50)
                     line_idea = list_ideas[idx_ideas]
                     try:
                         if line_idea[12] != community_id:
@@ -477,8 +436,7 @@ def build_dataset(fname_ideas, fname_comments, fname_orphan_comments, fname_vote
                         # Collect ideas related to the community
                         dict_idea = get_dict(header_ideas, line_idea)
                         idea_id = line_idea[0]
-                        idea_comments, hold_replies = [], []
-                        comment_ids, parent_ids = [], []
+                        idea_comments, comment_ids = [], []
                         # Collect comments related to the idea
                         for idx_comment in range(comment_pointer, total_comments):
                             line_comment = list_comments[idx_comment]
@@ -496,9 +454,10 @@ def build_dataset(fname_ideas, fname_comments, fname_orphan_comments, fname_vote
                                     idea_comments.append(dict_comment)
                                     comment_ids.append(line_comment[0])
                                     # save held back replies if parent appears
-                                    if line_comment[0] in parent_ids:
-                                        idea_comments += hold_replies
-                                        hold_replies = []
+                                    for hold_reply in list(hold_replies):
+                                        if hold_reply['parent_id'] == line_comment[0]:
+                                            idea_comments.append(hold_reply)
+                                            hold_replies.remove(hold_reply)
                                 else:
                                     # find whether the parent comment is a comment to this idea
                                     # if yes, save the reply, if not hold back
@@ -509,7 +468,6 @@ def build_dataset(fname_ideas, fname_comments, fname_orphan_comments, fname_vote
                                         idea_comments.append(dict_comment)
                                     else:
                                         hold_replies.append(dict_comment)
-                                        parent_ids.append(parent_comment_id)
                         dict_idea.update({'comments_array': idea_comments})
                         idea_votes = []
                         for idx_vote in range(vote_pointer, total_votes):
@@ -644,27 +602,141 @@ def load_authors():
     return authors
 
 
-def save_results(metric_results):
+def save_data_for_metrics(metric_results):
     j_results = json.dumps(metric_results)
-    with open('data/metric_results.json', 'w') as json_file:
+    with open('data/metric_data.json', 'w') as json_file:
         json_file.write(j_results)
         json_file.close()
 
 
-if __name__ == '__main__':
-    print('Loading data...')
+def collect_data_for_metrics():
+    print('Loading file data...')
     data = load_data()
     communities = load_communities()
     authors = load_authors()
-    print('Processing data for metrics, please wait...')
-    metrics = {'votes_comments_ideas': {},
-               'votes_replies_comments': {},
-               'response_time_ideas': {},
-               'response_time_comments': {},
-               'offtopic_content': {},
-               'tags_content': {},
-               'treatment_newcomers': {}}
-    metrics = compute_metrics(communities, authors, data, metrics)
-    print('Saving processed data, please wait...')
-    save_results(metrics)
-    print('Done!')
+    print('Collecting data for metrics, please wait...')
+    metrics_data = gather_data(communities, authors, data)
+    print('Saving collected data, please wait...')
+    save_data_for_metrics(metrics_data)
+
+    return metrics_data
+
+
+def merge_metric_data(metrics_data):
+    m_metric_data = {}
+
+    for metric_id, metric_data in metrics_data.iteritems():
+        for community_id, community_data in metric_data.iteritems():
+            if metric_id == 'tags_content':
+                dict_to_save = {metric_id: community_data}
+            else:
+                dict_to_save = community_data
+            if community_id in m_metric_data.keys():
+                m_metric_data[community_id].update(dict_to_save)
+            else:
+                m_metric_data[community_id] = dict_to_save
+
+    return m_metric_data
+
+##
+# Compute the following metrics related to IM communities
+#
+# 1)  ratio of ideas by members
+# 2)  ratio of comments by members
+# 3)  ratio of votes by members
+# 4)  ratio of ideas attended
+# 5)  ratio of ideas attended by votes
+# 6)  ratio of attended ideas whose first feedback was a vote
+# 7)  ratio of attended ideas whose first feedback was a comment
+# 8)  ratio of ideas attended by comments
+# 9)  ratio of comments attended
+# 10) ratio of comments attended only through votes
+# 11) ratio of comments attended only through replies
+# 12) ideas avg. response time, i.e.,
+# time between the creation of ideas and their corresponding
+# response (comment/vote)
+# 13) comments avg. response time, i.e., time between the creation
+# of comments and their corresponding reply
+# 14) ratio of off-topic ideas
+# 15) number of tags used to organize the content
+# 16) ratio of newcomers' initial ideas that received feedback
+# (comment/vote)
+# 17) ratio of times newcomers' initial ideas that received feedback
+# (comment/vote) during the first two weeks
+# 18) ratio of voting feedback to newcomers' ideas
+# 19) ratio of commenting feedback to newcomers' ideas
+# 20) newcomer avg. response time, i.e., time between the creation of
+# ideas and their corresponding response (comment/vote)
+# 21) ratio of ideas posted by newcomers
+# 22) number of ideas created by moderators/administrators
+# 23) number of comments created by moderators/administrators
+# 24) number of votes created by moderators/administrators
+# 25) total interventions (ideas+votes+comments)
+# 26) ratio of ideas created by moderators/administrators
+# 27) ratio of comments created by moderators/administrators
+# 28) ratio of votes created by moderators/administrators
+#
+##
+
+##
+# Computer metrics 1), 2), and 3)
+##
+def productivity(communities_ds, metric_results):
+    for community in communities_ds:
+        try:
+            num_ideas = int(community[4])
+            num_members = int(community[8])
+            num_votes = int(community[10])
+            num_comments = int(community[13])
+            prod_ideas = float(num_ideas)/float(num_members)
+            prod_votes = float(num_votes)/float(num_members)
+            prod_comments = float(num_comments)/float(num_members)
+            metric_results[community[0]] = {'ideas_by_members': prod_ideas,
+                                            'votes_by_members': prod_votes,
+                                            'comments_by_members': prod_comments}
+        except ValueError as e:
+            print(e.message)
+
+    return metric_results
+
+
+##
+# Computer metrics 4)-13)
+##
+def community_responsiveness(metrics_data, metric_results):
+    for community_id, community_data in metrics_data.iteritems():
+        # metric: 4) ratio of attended ideas
+        attended_ideas = len(community_data['attended_ideas'])
+        r_attended_ideas = float(attended_ideas)/float(community_data['ideas'])
+        metric_results[community_id].update({'attended_ideas': r_attended_ideas})
+        # metric: 5) ratio of ideas attended by votes
+        attended_ideas_by_vote = community_data['voted_ideas']
+        r_attended_ideas = float(attended_ideas_by_vote)/float(community_data['ideas'])
+        metric_results[community_id].update({'attended_ideas_by_vote': r_attended_ideas})
+
+
+def compute_metrics():
+    # load data collected previously to compute metrics
+    try:
+        with open('data/metric_data.json', 'rb') as json_m_data:
+            m_data = json.load(json_m_data)
+    except IOError as e:
+        m_data = collect_data_for_metrics()
+    except Exception as e:
+        print e
+        return
+    # load data about community interventions
+    with open('data/communities_dataset.csv', 'rb') as csv_communities:
+        overall_communities = csv.reader(csv_communities, delimiter=',')
+    community_metrics = {}
+    # compute productivity metrics
+    community_metrics = productivity(overall_communities, community_metrics)
+    # compute responsiveness metrics
+    community_metrics = community_responsiveness(m_data, community_metrics)
+
+    return community_metrics
+
+
+if __name__ == '__main__':
+    print('Computing metrics, please wait...')
+    compute_metrics()
