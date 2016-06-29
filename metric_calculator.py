@@ -1,6 +1,7 @@
 __author__ = 'jorgesaldivar'
 
 from dateutil import parser
+from sets import Set
 
 import csv
 import datetime
@@ -278,7 +279,7 @@ def data_metric_feedback_newcomer_idea(idea, authors):
 
 def problematic_community(community_id):
     TESTING_COMMUNITIES = ['13542', '24523', '2538', '2137', '22174', '25813', '10495',
-                           '34206', '8188', '6408', '8538']
+                           '34206', '8188', '6408', '8538', '10806']
     INCOMPLETE_COMMUNITIES = ['20036', '2780', '15287', '23001', '31589', '13493', '18116']
     UNAVAILABLE_COMMUNITIES = ['27159', '27749', '33602', '29324', '31683']
     SPAM_COMMUNITIES = ['27157', '24385']
@@ -606,19 +607,23 @@ def load_authors():
                     author = list_author1[idx]
                     ret = identify_author_reg_datetime(author)
                     if ret['idx_reg_dt'] != -1:
-                        # only consider authors whose registration datetime is known
-                        authors[author[0]] = {'id': author[0], 'registration_datetime': author[ret['idx_reg_dt']],
-                                              # know that community id will be
-                                              # always located at the end of the
-                                              # array
-                                              'community': ret['numeric_values'][-1]}
+                        reg_datetime = author[ret['idx_reg_dt']]
+                    else:
+                        reg_datetime = ''
+                    authors[author[0]] = {'id': author[0], 'registration_datetime': reg_datetime,
+                                          # know that community id will be always located at the end of the array
+                                          'community': ret['numeric_values'][-1], 'admin': author[2],
+                                          'moderator': author[3]}
                 for idx in range(2, total_author2):
                     author = list_author2[idx]
                     ret = identify_author_reg_datetime(author)
                     if ret['idx_reg_dt'] != -1:
-                        # only consider authors whose registration datetime is known
-                        authors[author[0]] = {'id': author[0], 'registration_datetime': author[ret['idx_reg_dt']],
-                                              'community': ret['numeric_values'][-1]}
+                        reg_datetime = author[ret['idx_reg_dt']]
+                    else:
+                        reg_datetime = ''
+                    authors[author[0]] = {'id': author[0], 'registration_datetime': reg_datetime,
+                                          'community': ret['numeric_values'][-1], 'admin': author[2],
+                                          'moderator': author[3]}
         j_author = json.dumps(authors)
         with open('data/authors.json', 'w') as json_file:
                 json_file.write(j_author)
@@ -799,7 +804,7 @@ def community_responsiveness(community_data):
         media_rt = numpy.median(rt_ideas)
         community_res_metrics['ideas_median_response_time_hours'] = media_rt
     else:
-        community_res_metrics['ideas_median_response_time_hours'] = 0
+        community_res_metrics['ideas_median_response_time_hours'] = -999
 
     # metric 13) avg. response time to comments
     if int(community_data['16_comments']) > 0 and num_attended_comments > 0:
@@ -812,9 +817,9 @@ def community_responsiveness(community_data):
             media_rt = numpy.median(rt_comments)
             community_res_metrics['comments_median_response_time_hours'] = media_rt
         else:
-            community_res_metrics['comments_median_response_time_hours'] = 0
+            community_res_metrics['comments_median_response_time_hours'] = -999
     else:
-        community_res_metrics['comments_median_response_time_hours'] = 0
+        community_res_metrics['comments_median_response_time_hours'] = -999
 
     return community_res_metrics
 
@@ -878,11 +883,11 @@ def newcomers_treatment(community_data):
         else:
             community_nc_metrics['vote_first_feedback_newcomer_ideas'] = 0
             community_nc_metrics['comment_first_feedback_newcomer_ideas'] = 0
-            community_nc_metrics['newcomer_ideas_median_response_time_hours'] = 0
+            community_nc_metrics['newcomer_ideas_median_response_time_hours'] = -999
     else:
         community_nc_metrics['vote_first_feedback_newcomer_ideas'] = 0
         community_nc_metrics['comment_first_feedback_newcomer_ideas'] = 0
-        community_nc_metrics['newcomer_ideas_median_response_time_hours'] = 0
+        community_nc_metrics['newcomer_ideas_median_response_time_hours'] = -999
 
     return community_nc_metrics
 
@@ -934,6 +939,7 @@ def moderator_interventions(communities_ds, metric_results):
 
 
 def compute_metrics():
+    print('Computing metrics, please wait...')
     # load data collected previously to compute metrics
     try:
         with open('data/metric_data.json', 'rb') as json_m_data:
@@ -966,6 +972,7 @@ def compute_metrics():
 
 
 def save_metric_results(community_metrics):
+    print('Saving metric results, please wait...')
     with open('data/community_metrics.csv', 'w') as csv_output:
         output = csv.writer(csv_output, delimiter=',')
         header = ['community_id', 'ideas_by_members', 'comments_by_members', 'votes_by_members',
@@ -1004,8 +1011,141 @@ def save_metric_results(community_metrics):
             output.writerow(row)
 
 
+def is_author_admin_or_mod(authors, author_id):
+    author = authors.get(author_id)
+    if author:
+        if author['admin'] == 'True' or \
+           author['moderator'] == 'True':
+            return True
+        else:
+            return False
+    else:
+        return False
+
+
+def compute_influence_mod_intervention():
+    data = load_data()
+    authors = load_authors()
+    community_counter = 0
+    tot_communities = len(data)
+    with open('data/community_mod_intervention_details.csv', 'w') as csv_output:
+        output = csv.writer(csv_output, delimiter=',')
+        header = ['community_id', 'users', 'idea_id', 'comments','votes', 'score',
+                  'mod_comments', 'mod_votes', 'distinct_comment_authors', 'author_admin',
+                  'author_comments', 'author_votes', 'participants']
+        output.writerow(header)
+        with open('data/communities_dataset.csv', 'rb') as csv_communities:
+            overall_communities = csv.reader(csv_communities, delimiter=',')
+            for community in overall_communities:
+                community_counter += 1
+                print_progress_bar(community_counter, tot_communities, prefix='Progress',
+                                   suffix='Completed', bar_length=50)
+                if community[0] == 'id': continue
+                community_id = community[0]
+                community_users = int(community[8])
+                if problematic_community(community_id): continue
+                c_ideas = data.get(community_id)
+                if not c_ideas: continue
+                for idea in c_ideas:
+                    comments = int(idea['comments'])
+                    if len(idea['comments_array']) != comments:
+                        # consider only cases where all comments
+                        # are in the data set
+                        continue
+                    votes = int(idea['up_votes']) + int(idea['down_votes'])
+                    score = int(idea['up_votes']) - int(idea['down_votes'])
+                    if len(idea['votes_array']) != votes:
+                        # consider only cases where all votes
+                        # are in the data set
+                        continue
+                    is_admin = is_author_admin_or_mod(authors, idea['author_id'])
+                    author_comments = 0
+                    author_votes = 0
+                    mod_comments = 0
+                    mod_votes = 0
+                    participants = []
+                    for comment in idea['comments_array']:
+                        if is_author_admin_or_mod(authors, comment['author_id']):
+                            mod_comments += 1
+                        else:
+                            if comment['author_id'] == idea['author_id']:
+                                author_comments += 1
+                            else:
+                                # If it isn't moderator or author, then
+                                # it is participants
+                                try:
+                                    participants.index(comment['author_id'])
+                                except ValueError:
+                                    participants.append(comment['author_id'])
+                    distinct_author_comments = len(participants)
+                    for vote in idea['votes_array']:
+                        if vote['author'] == idea['author_id']:
+                            author_votes += 1
+                        else:
+                            if is_author_admin_or_mod(authors, vote['author']):
+                                mod_votes += 1
+                            else:
+                                try:
+                                    participants.index(vote['author'])
+                                except ValueError:
+                                    participants.append(vote['author'])
+                    num_participants = len(participants)
+                    row = [community_id, community_users, idea['id'], comments, votes, score,
+                           mod_comments, mod_votes, distinct_author_comments, is_admin,
+                           author_comments, author_votes, num_participants]
+                    output.writerow(row)
+
+
+def compute_participation_level():
+    max_top_ideators = 5
+
+    with open('data/community_participation_level.csv', 'w') as csv_output:
+        output = csv.writer(csv_output, delimiter=',')
+        header = ['community_id', 'ideators', 'voters', 'commenters',
+                  'super_part', 'ideators_voters', 'ideators_commenters',
+                  'commenters_voters', 'only_ideators', 'only_voters',
+                  'only_commenters', 'top_ideators', 'tot_top_ideators']
+        output.writerow(header)
+        with open('data/dataset.json') as json_file:
+            j_data = json.load(json_file)
+            for community_id, ideas in j_data.iteritems():
+                ideators, voters, commenters = Set([]), Set([]), Set([])
+                dict_ideators = {}
+                for idea in ideas:
+                    if idea['author_id'] not in ideators:
+                        ideators.add(idea['author_id'])
+                    if idea['author_id'] not in dict_ideators.keys():
+                        dict_ideators[idea['author_id']] = 1
+                    else:
+                        dict_ideators[idea['author_id']] += 1
+                    for comment in idea['comments_array']:
+                        if comment['author_id'] not in commenters:
+                            commenters.add(comment['author_id'])
+                    for vote in idea['votes_array']:
+                        if vote['author'] not in voters:
+                            voters.add(vote['author'])
+                super_part = len(ideators & voters & commenters)
+                ideators_voters = len(ideators & voters)
+                ideators_commenters = len(ideators & commenters)
+                commenters_voters = len(commenters & voters)
+                only_ideators = len((ideators - voters) - commenters)
+                only_voters = len((voters - ideators) - commenters)
+                only_commenters = len((commenters - ideators)-voters)
+                sorted_ideators = sorted(dict_ideators.values(), reverse=True)
+                if len(dict_ideators) > max_top_ideators:
+                    top_ideators = sorted_ideators[:max_top_ideators]
+                else:
+                    top_ideators = sorted_ideators
+                row = [community_id, len(ideators), len(voters), len(commenters),
+                       super_part, ideators_voters, ideators_commenters,
+                       commenters_voters, only_ideators, only_voters, only_commenters,
+                       "-".join(map(str, top_ideators)), sum(top_ideators)]
+                output.writerow(row)
+
+
+
 if __name__ == '__main__':
-    print('Computing metrics, please wait...')
-    metric_results = compute_metrics()
-    print('Saving metric results, please wait...')
-    save_metric_results(metric_results)
+    #compute_participation_level()
+    compute_influence_mod_intervention()
+    #metric_results = compute_metrics()
+    #save_metric_results(metric_results)
